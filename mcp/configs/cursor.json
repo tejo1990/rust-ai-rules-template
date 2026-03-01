@@ -1,0 +1,26 @@
+{
+  "_comment": "Cursor MCP 설정. 프로젝트 루트의 .cursor/mcp.json에 복사",
+  "mcpServers": {
+    "git": {
+      "url": "http://localhost:3001/sse"
+    },
+    "github": {
+      "url": "http://localhost:3002/sse"
+    },
+    "filesystem": {
+      "url": "http://localhost:3003/sse"
+    },
+    "sequential-thinking": {
+      "url": "http://localhost:3004/sse"
+    },
+    "memory": {
+      "url": "http://localhost:3005/sse"
+    },
+    "fetch": {
+      "url": "http://localhost:3006/sse"
+    },
+    "cargo": {
+      "url": "http://localhost:3008/sse"
+    }
+  }
+}

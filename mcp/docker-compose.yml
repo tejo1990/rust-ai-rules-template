@@ -1,0 +1,124 @@
+# Rust AI Coding — Local MCP Server Stack
+#
+# 사용법:
+#   cp mcp/.env.example mcp/.env  (토큰 설정)
+#   cd mcp && docker compose up -d
+#
+# 모든 MCP 서버가 stdio가 아닌 SSE(HTTP) 모드로 실행됨
+# Claude Code, Cursor, Antigravity, Windsurf 모두 이 서버들을 공유함
+
+services:
+
+  # ── Git 작업 ─────────────────────────────────────────────────
+  mcp-git:
+    image: mcp/git:latest
+    build:
+      context: ./servers/git
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    ports:
+      - "3001:3001"
+    volumes:
+      # 프로젝트 루트를 마운트 (상위 디렉터리)
+      - ${WORKSPACE_ROOT:-../..}:/workspace:rw
+    environment:
+      - MCP_PORT=3001
+      - WORKSPACE=/workspace
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3001/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # ── GitHub API ───────────────────────────────────────────────
+  mcp-github:
+    image: ghcr.io/modelcontextprotocol/servers/github:latest
+    restart: unless-stopped
+    ports:
+      - "3002:3002"
+    environment:
+      - GITHUB_TOKEN=${GITHUB_TOKEN}
+      - MCP_PORT=3002
+
+  # ── Filesystem (프로젝트 파일 접근) ─────────────────────────
+  mcp-filesystem:
+    image: ghcr.io/modelcontextprotocol/servers/filesystem:latest
+    restart: unless-stopped
+    ports:
+      - "3003:3003"
+    volumes:
+      - ${WORKSPACE_ROOT:-../..}:/workspace:rw
+    environment:
+      - ALLOWED_PATHS=/workspace
+      - MCP_PORT=3003
+
+  # ── Sequential Thinking (복잡한 계획 수립) ──────────────────
+  mcp-thinking:
+    image: ghcr.io/modelcontextprotocol/servers/sequential-thinking:latest
+    restart: unless-stopped
+    ports:
+      - "3004:3004"
+    environment:
+      - MCP_PORT=3004
+
+  # ── Memory (세션 간 컨텍스트 유지) ──────────────────────────
+  mcp-memory:
+    image: ghcr.io/modelcontextprotocol/servers/memory:latest
+    restart: unless-stopped
+    ports:
+      - "3005:3005"
+    volumes:
+      - mcp-memory-data:/data
+    environment:
+      - STORAGE_PATH=/data
+      - MCP_PORT=3005
+
+  # ── Fetch (웹 리소스 조회 — crates.io, docs.rs 등) ──────────
+  mcp-fetch:
+    image: ghcr.io/modelcontextprotocol/servers/fetch:latest
+    restart: unless-stopped
+    ports:
+      - "3006:3006"
+    environment:
+      - MCP_PORT=3006
+      # crates.io, docs.rs, Rust 공식 문서만 허용 (선택사항)
+      # - ALLOWED_DOMAINS=crates.io,docs.rs,doc.rust-lang.org,lib.rs
+
+  # ── Postgres (SQLx 프로젝트용 — web-axum 도메인) ────────────
+  mcp-postgres:
+    image: ghcr.io/modelcontextprotocol/servers/postgres:latest
+    restart: unless-stopped
+    ports:
+      - "3007:3007"
+    environment:
+      - POSTGRES_CONNECTION_STRING=${POSTGRES_URL:-postgresql://localhost:5432/dev}
+      - MCP_PORT=3007
+    profiles:
+      - web  # docker compose --profile web up 으로 선택적 실행
+
+  # ── Rust 전용: cargo 명령 실행 ────────────────────────────────
+  # (커스텀 서버 — 아래 servers/cargo/ 폴더에 구현)
+  mcp-cargo:
+    build:
+      context: ./servers/cargo
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    ports:
+      - "3008:3008"
+    volumes:
+      - ${WORKSPACE_ROOT:-../..}:/workspace:rw
+      # cargo 캐시 공유로 빌드 속도 유지
+      - cargo-cache:/usr/local/cargo/registry
+    environment:
+      - WORKSPACE=/workspace
+      - MCP_PORT=3008
+      - ALLOWED_COMMANDS=check,clippy,test,fmt,build,doc,size,bloat
+      - DENIED_COMMANDS=install,uninstall,publish
+
+volumes:
+  mcp-memory-data:
+  cargo-cache:
+
+networks:
+  default:
+    name: mcp-local

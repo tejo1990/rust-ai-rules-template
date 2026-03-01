@@ -1,0 +1,238 @@
+name: Weekly Rules Update
+
+# 매주 월요일 09:00 KST (00:00 UTC) 자동 실행
+# 또는 수동 실행 가능
+on:
+  schedule:
+    - cron: '0 0 * * 1'
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'Dry run (PR을 열지 않고 분석만)'
+        required: false
+        default: 'false'
+
+jobs:
+  analyze-and-propose:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Fetch Rust ecosystem news
+        id: fetch_news
+        run: |
+          mkdir -p .tmp
+
+          # This Week in Rust (최신호)
+          TWIR_URL=$(curl -s https://this-week-in-rust.org/ \
+            | grep -oP 'href="/issues/\K[0-9]+' | head -1)
+          curl -sL "https://this-week-in-rust.org/issues/${TWIR_URL}" \
+            -o .tmp/twir.html 2>/dev/null || echo "TWIR fetch failed"
+
+          # Rust Blog (최근 3개)
+          curl -sL "https://blog.rust-lang.org/feed.xml" \
+            -o .tmp/rust_blog.xml 2>/dev/null || echo "Rust blog fetch failed"
+
+          # crates.io 최근 인기 crate (tokio, axum, embassy, clap 생태계)
+          for crate in tokio axum embassy-executor sqlx clap tracing; do
+            curl -sL "https://crates.io/api/v1/crates/${crate}" \
+              -o ".tmp/crate_${crate}.json" 2>/dev/null || true
+          done
+
+          # Rust RFC (최근 merged)
+          curl -sL "https://github.com/rust-lang/rfcs/commits/master.atom" \
+            -o .tmp/rfcs.xml 2>/dev/null || echo "RFC fetch failed"
+
+          echo "Fetch complete"
+
+      - name: Extract current rules
+        run: |
+          # 현재 rules 파일 수집
+          cat _common/base.rules.md _common/tdd.rules.md \
+            web-axum/CLAUDE.md embedded/CLAUDE.md systems-cli/CLAUDE.md \
+            > .tmp/current_rules_combined.md 2>/dev/null || true
+          echo "Rules extracted: $(wc -l < .tmp/current_rules_combined.md) lines"
+
+      - name: Analyze with Claude API
+        id: analyze
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: |
+          # 수집한 데이터 요약
+          TWIR_TEXT=$(cat .tmp/twir.html 2>/dev/null | \
+            python3 -c "import sys,re; text=sys.stdin.read(); \
+            text=re.sub('<[^>]+>','',text); print(text[:3000])" || echo "")
+
+          BLOG_TEXT=$(cat .tmp/rust_blog.xml 2>/dev/null | \
+            python3 -c "import sys,re; text=sys.stdin.read(); \
+            text=re.sub('<[^>]+>','',text); print(text[:2000])" || echo "")
+
+          CRATE_VERSIONS=$(for f in .tmp/crate_*.json; do
+            crate=$(basename $f .json | sed 's/crate_//'); \
+            ver=$(python3 -c "import json,sys; d=json.load(open('$f')); \
+            print(d['crate']['newest_version'])" 2>/dev/null || echo "?"); \
+            echo "${crate}: ${ver}";
+          done)
+
+          CURRENT_RULES=$(cat .tmp/current_rules_combined.md | head -200)
+
+          # Claude API 호출
+          PROMPT=$(cat << 'PROMPT_EOF'
+          You are a Rust ecosystem expert reviewing AI coding rules for currency and accuracy.
+
+          ## Current rules (excerpt)
+          CURRENT_RULES_PLACEHOLDER
+
+          ## Latest Rust ecosystem news
+          ### This Week in Rust
+          TWIR_PLACEHOLDER
+
+          ### Rust Blog
+          BLOG_PLACEHOLDER
+
+          ### Latest stable crate versions
+          CRATE_VERSIONS_PLACEHOLDER
+
+          ## Task
+          Analyze the current rules against the latest ecosystem news.
+          Identify:
+          1. Outdated version recommendations (if any crate versions changed significantly)
+          2. New best practices or patterns that emerged recently
+          3. Deprecated patterns that should be updated
+          4. New relevant crates or tools worth mentioning
+          5. Any Rust language features (stabilized RFCs) that affect the rules
+
+          Respond in this EXACT format:
+
+          ## SUMMARY
+          [2-3 sentences: overall assessment]
+
+          ## CHANGES_NEEDED
+          [List of specific, actionable changes. If none needed, write "None this week."]
+          - FILE: [filename] | SECTION: [section name] | CHANGE: [what to change and why]
+
+          ## NEW_CRATES_OR_TOOLS
+          [Any new crates/tools worth adding to rules, with brief rationale]
+
+          ## CONFIDENCE
+          [HIGH/MEDIUM/LOW - how confident you are in the suggestions based on source quality]
+          PROMPT_EOF
+          )
+
+          # 플레이스홀더 교체
+          PROMPT=$(echo "$PROMPT" | \
+            sed "s|CURRENT_RULES_PLACEHOLDER|${CURRENT_RULES}|" | \
+            sed "s|TWIR_PLACEHOLDER|${TWIR_TEXT}|" | \
+            sed "s|BLOG_PLACEHOLDER|${BLOG_TEXT}|" | \
+            sed "s|CRATE_VERSIONS_PLACEHOLDER|${CRATE_VERSIONS}|")
+
+          # API 호출
+          RESPONSE=$(curl -s https://api.anthropic.com/v1/messages \
+            -H "x-api-key: ${ANTHROPIC_API_KEY}" \
+            -H "anthropic-version: 2023-06-01" \
+            -H "content-type: application/json" \
+            -d "$(python3 -c "
+          import json, sys
+          prompt = sys.stdin.read()
+          payload = {
+            'model': 'claude-sonnet-4-6',
+            'max_tokens': 2000,
+            'messages': [{'role': 'user', 'content': prompt}]
+          }
+          print(json.dumps(payload))
+          " <<< "$PROMPT")")
+
+          # 응답 추출
+          ANALYSIS=$(echo "$RESPONSE" | \
+            python3 -c "import json,sys; r=json.load(sys.stdin); \
+            print(r['content'][0]['text'])" 2>/dev/null || \
+            echo "Analysis failed: API error")
+
+          # 파일로 저장 및 GitHub output
+          echo "$ANALYSIS" > .tmp/analysis.md
+          echo "analysis_generated=true" >> $GITHUB_OUTPUT
+          echo "Analysis generated:"
+          echo "$ANALYSIS" | head -20
+
+      - name: Create PR with suggestions
+        if: |
+          steps.analyze.outputs.analysis_generated == 'true' &&
+          github.event.inputs.dry_run != 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          BRANCH="rules-update-$(date +%Y%m%d)"
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          git checkout -b "$BRANCH"
+
+          # 분석 결과를 CHANGELOG로 저장
+          DATE=$(date +%Y-%m-%d)
+          mkdir -p _updates
+          cat > "_updates/${DATE}-analysis.md" << 'EOF'
+          # Rules Update Analysis — DATE_PLACEHOLDER
+
+          > Auto-generated by weekly-rules-update workflow.
+          > Human review required before merging.
+
+          ANALYSIS_PLACEHOLDER
+          EOF
+
+          sed -i "s|DATE_PLACEHOLDER|${DATE}|" "_updates/${DATE}-analysis.md"
+          # analysis 내용 삽입
+          ANALYSIS=$(cat .tmp/analysis.md)
+          python3 -c "
+          with open('_updates/${DATE}-analysis.md', 'r') as f:
+              content = f.read()
+          with open('.tmp/analysis.md', 'r') as f:
+              analysis = f.read()
+          content = content.replace('ANALYSIS_PLACEHOLDER', analysis)
+          with open('_updates/${DATE}-analysis.md', 'w') as f:
+              f.write(content)
+          "
+
+          git add "_updates/${DATE}-analysis.md"
+          git commit -m "chore: weekly rules analysis ${DATE}"
+          git push origin "$BRANCH"
+
+          # PR 생성
+          ANALYSIS_PREVIEW=$(head -30 .tmp/analysis.md)
+          gh pr create \
+            --title "[Auto] Weekly Rust Rules Update — ${DATE}" \
+            --body "## 자동 생성된 Rules 업데이트 제안
+
+          이 PR은 GitHub Actions가 매주 자동으로 생성합니다.
+          **머지 전에 반드시 사람이 검토하세요.**
+
+          ### 분석 요약
+          \`\`\`
+          ${ANALYSIS_PREVIEW}
+          \`\`\`
+
+          ### 소스
+          - This Week in Rust (최신호)
+          - Rust Blog (최근 포스트)
+          - crates.io 버전 정보 (tokio, axum, embassy 등)
+          - Rust RFC merged 목록
+
+          ### 검토 방법
+          1. `_updates/` 폴더의 분석 파일 읽기
+          2. 제안된 변경사항이 타당한지 확인
+          3. 타당하면 해당 rules 파일 직접 수정 후 커밋
+          4. 타당하지 않으면 PR 닫기
+          " \
+            --label "automation,rules-update" \
+            --base main \
+            --head "$BRANCH"
+
+      - name: Dry run output
+        if: github.event.inputs.dry_run == 'true'
+        run: |
+          echo "=== DRY RUN MODE — PR을 생성하지 않음 ==="
+          cat .tmp/analysis.md

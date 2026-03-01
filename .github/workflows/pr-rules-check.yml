@@ -1,0 +1,66 @@
+name: Rules Quality Check
+
+# Rules 파일 변경 시 기본 품질 검사
+on:
+  pull_request:
+    paths:
+      - '**/*.rules.md'
+      - '**/CLAUDE.md'
+      - '**/.cursorrules'
+      - '**/.gemini/GEMINI.md'
+      - '**/.agents/skills/**/SKILL.md'
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check required sections exist
+        run: |
+          ERRORS=0
+
+          for domain in web-axum embedded systems-cli; do
+            for file in CLAUDE.md .cursorrules .gemini/GEMINI.md; do
+              path="${domain}/${file}"
+              if [ -f "$path" ]; then
+                # 필수 섹션 확인
+                if ! grep -q '## Agentic Workflow' "$path"; then
+                  echo "MISSING: '## Agentic Workflow' in $path"
+                  ERRORS=$((ERRORS+1))
+                fi
+                if ! grep -q 'AGENT_LOG' "$path"; then
+                  echo "MISSING: AGENT_LOG reference in $path"
+                  ERRORS=$((ERRORS+1))
+                fi
+                if ! grep -q 'cargo clippy' "$path"; then
+                  echo "MISSING: clippy requirement in $path"
+                  ERRORS=$((ERRORS+1))
+                fi
+              fi
+            done
+          done
+
+          if [ $ERRORS -gt 0 ]; then
+            echo "Found $ERRORS issue(s) in rules files"
+            exit 1
+          fi
+          echo "All rules files look good"
+
+      - name: Check SKILL.md format
+        run: |
+          for skill in $(find . -name 'SKILL.md'); do
+            if ! grep -q '^name:' "$skill"; then
+              echo "MISSING: 'name:' field in $skill"
+              exit 1
+            fi
+            if ! grep -q '^triggers:' "$skill"; then
+              echo "MISSING: 'triggers:' field in $skill"
+              exit 1
+            fi
+            if ! grep -q 'Verification Checklist' "$skill"; then
+              echo "MISSING: Verification Checklist in $skill"
+              exit 1
+            fi
+          done
+          echo "All SKILL.md files look good"
