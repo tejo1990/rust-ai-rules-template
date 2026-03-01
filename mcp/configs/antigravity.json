@@ -1,41 +1,31 @@
 {
-  "_comment": "Google Antigravity MCP 설정. .gemini/antigravity/mcp_config.json에 복사",
-  "_note": "Antigravity는 MCP 서버를 Agent Manager에서 자동으로 감지합니다",
-  "servers": [
-    {
-      "name": "git",
-      "url": "http://localhost:3001/sse",
-      "transport": "sse"
+  "mcpServers": {
+    "filesystem": {
+      "url": "http://localhost:3001",
+      "transport": "http"
     },
-    {
-      "name": "github",
-      "url": "http://localhost:3002/sse",
-      "transport": "sse"
+    "git": {
+      "url": "http://localhost:3002",
+      "transport": "http"
     },
-    {
-      "name": "filesystem",
-      "url": "http://localhost:3003/sse",
-      "transport": "sse"
+    "github": {
+      "url": "http://localhost:3003",
+      "transport": "http"
     },
-    {
-      "name": "sequential-thinking",
-      "url": "http://localhost:3004/sse",
-      "transport": "sse"
+    "memory": {
+      "url": "http://localhost:3004",
+      "transport": "http"
     },
-    {
-      "name": "memory",
-      "url": "http://localhost:3005/sse",
-      "transport": "sse"
+    "sequential-thinking": {
+      "url": "http://localhost:3005",
+      "transport": "http"
     },
-    {
-      "name": "fetch",
-      "url": "http://localhost:3006/sse",
-      "transport": "sse"
-    },
-    {
-      "name": "cargo",
-      "url": "http://localhost:3008/sse",
-      "transport": "sse"
+    "fetch": {
+      "url": "http://localhost:3006",
+      "transport": "http"
     }
-  ]
+  }
 }
+
+// 사용법:
+// cp mcp/configs/antigravity.json .gemini/antigravity/mcp_config.json

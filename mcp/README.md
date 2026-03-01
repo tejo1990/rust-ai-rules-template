@@ -1,129 +1,84 @@
 # MCP Docker Stack
 
-Docker로 실행되는 로컬 MCP 서버 모음.
-모든 AI 코딩 플랫폼(Claude Code, Cursor, Antigravity, Windsurf)이 **동일한 서버를 공유**.
+어떤 AI 코딩 플랫폼에서든 **동일한 MCP 서버**를 Docker로 실행하고,
+**플랫폼별 얇은 config 파일**로 연결하는 구조야.
 
----
-
-## 서버 목록
+## 구성 MCP 서버
 
 | 서버 | 포트 | 역할 |
 |------|------|------|
-| `mcp-git` | 3001 | git 작업 (commit, diff, log) |
-| `mcp-github` | 3002 | GitHub API (PR, Issues, Actions) |
-| `mcp-filesystem` | 3003 | 파일 읽기/쓰기 (workspace 제한) |
-| `mcp-thinking` | 3004 | Sequential Thinking (복잡한 계획 수립) |
-| `mcp-memory` | 3005 | 세션 간 컨텍스트 유지 |
-| `mcp-fetch` | 3006 | 웹 조회 (crates.io, docs.rs 등) |
-| `mcp-postgres` | 3007 | PostgreSQL 쿼리 (web-axum 도메인) |
-| `mcp-cargo` | 3008 | cargo 명령 안전 실행 (Rust 전용) |
-
----
+| filesystem | 3001 | 프로젝트 파일 읽기/쓰기 (워크스페이스 한정) |
+| git | 3002 | git 조작 (commit, diff, log 등) |
+| github | 3003 | GitHub API (PR, Issues, Actions) |
+| memory | 3004 | 세션 간 컨텍스트 유지 (아키텍처 결정사항 등) |
+| sequential-thinking | 3005 | 복잡한 멀티스텝 계획 수립 |
+| fetch | 3006 | 외부 문서/crates.io/RFC 페이지 fetch |
 
 ## 빠른 시작
 
-### 1. 환경변수 설정
 ```bash
+# 1. 환경변수 설정
 cd mcp
 cp .env.example .env
-nano .env  # GITHUB_TOKEN, WORKSPACE_ROOT 설정
-```
+# .env 열어서 GITHUB_TOKEN, PROJECTS_ROOT 편집
 
-### 2. 서버 시작
-```bash
-# 기본 (embedded, systems-cli 도메인)
-cd mcp && docker compose up -d
+# 2. Docker 스택 실행
+docker compose up -d
 
-# web-axum 도메인 (PostgreSQL 포함)
-cd mcp && docker compose --profile web up -d
-
-# 상태 확인
+# 3. 상태 확인
 docker compose ps
-curl http://localhost:3001/health
+
+# 4. 플랫폼별 config 복사 (한 번만)
+./scripts/mcp-setup.sh cursor        # → .cursor/mcp.json
+./scripts/mcp-setup.sh claude-code   # → .claude/settings.json
+./scripts/mcp-setup.sh antigravity   # → .gemini/antigravity/mcp_config.json
+./scripts/mcp-setup.sh windsurf      # → ~/.codeium/windsurf/mcp_config.json
 ```
 
-### 3. 플랫폼별 config 복사
+## 플랫폼별 config 파일 위치
+
+| 플랫폼 | config 복사 경로 | 비고 |
+|--------|-----------------|------|
+| **Cursor** | `<project>/.cursor/mcp.json` | 프로젝트별 |
+| **Claude Code** | `<project>/.claude/settings.json` | 프로젝트별 |
+| **Antigravity** | `<project>/.gemini/antigravity/mcp_config.json` | 프로젝트별 |
+| **Windsurf** | `~/.codeium/windsurf/mcp_config.json` | 글로벌 |
+
+> **핵심**: Docker 서버는 한 번만 올리면 모든 플랫폼이 같은 서버를 공유.
+> 토큰/키는 `.env` 한 곳에서만 관리.
+
+## 보안 주의사항
+
+- `.env` 파일은 절대 git에 커밋하지 마 (`.gitignore`에 포함됨)
+- `PROJECTS_ROOT` 밖의 경로는 filesystem MCP가 거부
+- 모든 서버는 `127.0.0.1`(localhost)에만 바인딩 — 외부 접근 불가
+- `GITHUB_TOKEN`은 최소 권한으로 생성 (repo + read:org)
+
+## 스택 관리
 
 ```bash
-# Claude Code (글로벌)
-cp configs/claude-code.json ~/.claude/claude_desktop_config.json
+# 중지
+docker compose -f mcp/docker-compose.yml down
 
-# Claude Code (프로젝트별)
-mkdir -p ~/projects/my-api/.claude
-cp configs/claude-code.json ~/projects/my-api/.claude/settings.json
+# 로그 확인
+docker compose -f mcp/docker-compose.yml logs -f
 
-# Cursor (프로젝트별)
-mkdir -p ~/projects/my-api/.cursor
-cp configs/cursor.json ~/projects/my-api/.cursor/mcp.json
+# 특정 서버만 재시작
+docker compose -f mcp/docker-compose.yml restart mcp-github
 
-# Antigravity
-mkdir -p ~/projects/my-api/.gemini/antigravity
-cp configs/antigravity.json ~/projects/my-api/.gemini/antigravity/mcp_config.json
-
-# Windsurf (글로벌)
-cp configs/windsurf.json ~/.codeium/windsurf/mcp_config.json
+# memory 데이터 초기화
+docker compose -f mcp/docker-compose.yml down -v
 ```
 
-또는 `scripts/mcp-setup.sh` 스크립트 사용:
-```bash
-# 한 줄로 모든 플랫폼 설정
-./scripts/mcp-setup.sh ~/projects/my-api all
-```
+## init.sh 연동
 
----
-
-## mcp-cargo 서버 (Rust 전용)
-
-`cargo check`, `cargo test` 등을 MCP 도구로 에이전트가 직접 실행 가능.
-
-```
-# AI 에이전트가 사용 예시:
-cargo_check_all()  → check + clippy + test 순서 실행
-cargo_run(command="test", args="-- specific_test")  → 특정 테스트만
-cargo_run(command="clippy", args="-- -D warnings")
-```
-
-**보안**: `ALLOWED_COMMANDS` 외 명령 실행 불가. `install`, `publish` 등 위험 명령 차단.
-
----
-
-## Sequential Thinking 활용
-
-`mcp-thinking` 서버는 복잡한 계획 수립에 효과적.
-
-```
-# 에이전트 프롬프트 예시:
-"sequential-thinking 도구를 사용해서
- 이 Axum API에 인증 미들웨어를 추가하는 계획을 먼저 세워줘.
- 계획이 완료되면 구현을 시작해."
-```
-
----
-
-## 자동 시작 (macOS launchd)
+`scripts/init.sh`로 도메인 rules를 복사할 때 MCP config도 함께 복사:
 
 ```bash
-# 시스템 시작 시 자동 실행
-cat > ~/Library/LaunchAgents/com.rust-mcp.plist << 'EOF'
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" ...>
-<plist version="1.0">
-<dict>
-  <key>Label</key>
-  <string>com.rust-mcp</string>
-  <key>ProgramArguments</key>
-  <array>
-    <string>/usr/local/bin/docker</string>
-    <string>compose</string>
-    <string>-f</string>
-    <string>/path/to/rust-ai-rules-template/mcp/docker-compose.yml</string>
-    <string>up</string>
-    <string>-d</string>
-  </array>
-  <key>RunAtLoad</key>
-  <true/>
-</dict>
-</plist>
-EOF
-launchctl load ~/Library/LaunchAgents/com.rust-mcp.plist
+# 기존: rules만 복사
+./scripts/init.sh web-axum ~/projects/my-api
+
+# MCP config도 함께 복사 (--mcp 플래그)
+./scripts/init.sh web-axum ~/projects/my-api --mcp cursor
+./scripts/init.sh web-axum ~/projects/my-api --mcp claude-code
 ```

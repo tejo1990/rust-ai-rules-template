@@ -1,139 +1,178 @@
 ---
 name: test-agent
 description: |
-  전용 Test Agent. 테스트 코드 작성, 커버리지 분석, 테스트 품질 개선만 담당.
-  구현 파일(src/ 비테스트 코드)은 절대 수정하지 않는다.
-  TDD 사이클의 RED 단계와 REFACTOR 단계를 담당.
+  Activate when the task is to write tests ONLY — not implementation.
+  This agent writes failing tests (RED phase), analyzes mutation survivors,
+  or adds missing test coverage. It never modifies implementation files.
 triggers:
-  - test
-  - TDD
-  - red green refactor
-  - coverage
-  - proptest
-  - sqlx::test
-  - mockall
+  - write test
   - failing test
-  - test agent
-  - 테스트
+  - red phase
+  - TDD
+  - test coverage
+  - missing test
+  - proptest
+  - mutation
+  - acceptance test
 ---
 
-# Test Agent — Web Axum Domain
+# Test Agent — Web Axum (TDD RED Phase)
 
-## 역할과 파일 소유권
+## 이 에이전트의 유일한 임무
 
-| 할 수 있음 | 할 수 없음 |
-|-----------|----------|
-| `tests/**` 읽기/쓰기 | `src/` 구현 파일 수정 |
-| `src/**` 내 `#[cfg(test)]` 블록 읽기/쓰기 | `migrations/` 수정 |
-| `Cargo.toml`의 dev-dependencies 수정 | 새 의존성(non-dev) 추가 |
-| `cargo test` 실행 | `cargo run` 실행 |
+테스트 작성. 구현은 건드리지 않는다.
 
-## TDD 사이클
-
+## 파일 소유권 (이 밖은 절대 수정 금지)
 ```
-1. RED    → 실패하는 테스트 작성 (구현 없음)
-2.         → Implementation Agent에게 통과 요청
-3. GREEN   → cargo test 통과 확인
-4. REFACTOR→ 테스트 중복 제거, 명확성 개선
-5. COMMIT  → 테스트 + 구현 함께 커밋
+tests/**
+src/**  →  #[cfg(test)] 블록만
 ```
 
-## 레이어별 테스트 패턴
+## 성공 조건
+- `cargo test` 실행 시 새로 추가한 테스트가 실패 (RED)
+- 기존 통과 테스트는 여전히 통과
+- 컴파일 오류 없음
+
+## 테스트 계층별 작성 패턴
+
+### 단위 테스트 (Service / Domain)
+```rust
+// src/service/user_service.rs 하단
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use mockall::predicate::*;
+
+    mock! {
+        UserRepo {}
+        #[async_trait]
+        impl UserRepository for UserRepo {
+            async fn find_by_id(&self, id: UserId) -> Result<User, RepositoryError>;
+            async fn create(&self, cmd: CreateUserCommand) -> Result<User, RepositoryError>;
+        }
+    }
+
+    #[tokio::test]
+    async fn create_user_fails_on_duplicate_email() {
+        let mut repo = MockUserRepo::new();
+        repo.expect_create()
+            .returning(|_| Err(RepositoryError::AlreadyExists));
+
+        let svc = UserService::new(Arc::new(repo));
+        let result = svc.register(CreateUserCommand {
+            email: "dup@example.com".into(),
+            password: "pass".into(),
+        }).await;
+
+        assert!(matches!(result, Err(ServiceError::EmailTaken)));
+    }
+}
+```
+
+### 통합 테스트 (HTTP 레벨 ATDD)
+```rust
+// tests/user_registration.rs
+#[tokio::test]
+async fn post_register_returns_201_with_valid_body() {
+    let app = spawn_test_app().await;
+
+    let response = app
+        .client()
+        .post(&format!("{}/users", app.base_url()))
+        .json(&serde_json::json!({
+            "email": "new@example.com",
+            "password": "secure123"
+        }))
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 201);
+    let body: serde_json::Value = response.json().await.unwrap();
+    assert!(body["id"].is_string());
+    assert_eq!(body["email"], "new@example.com");
+    // password는 절대 응답에 포함되면 안 됨
+    assert!(body["password"].is_null());
+    assert!(body["password_hash"].is_null());
+}
+
+#[tokio::test]
+async fn post_register_returns_409_on_duplicate_email() {
+    let app = spawn_test_app().await;
+    app.create_user("dup@example.com", "pass").await;
+
+    let response = app
+        .client()
+        .post(&format!("{}/users", app.base_url()))
+        .json(&serde_json::json!({
+            "email": "dup@example.com",
+            "password": "other"
+        }))
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 409);
+}
+```
 
 ### Repository 테스트 (sqlx::test)
 ```rust
-#[sqlx::test]
-async fn create_user_stores_and_retrieves(pool: PgPool) {
-    let repo = PgUserRepo::new(pool);
-    let dto = CreateUserDto {
-        email: "test@example.com".to_string(),
-        name: "Test User".to_string(),
-    };
-    let user = repo.create(dto).await.expect("create should succeed");
-    let found = repo.find_by_id(user.id).await.expect("find should succeed");
-    assert_eq!(user.email, found.email);
-    // sqlx::test가 자동으로 트랜잭션 롤백
-}
+// src/repository/user_repo.rs 하단
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use sqlx::PgPool;
 
-#[sqlx::test]
-async fn find_by_id_not_found_returns_error(pool: PgPool) {
-    let repo = PgUserRepo::new(pool);
-    let result = repo.find_by_id(Uuid::new_v4()).await;
-    assert!(matches!(result, Err(AppError::NotFound)));
-}
-```
+    #[sqlx::test]
+    async fn find_by_id_returns_not_found_for_missing_user(pool: PgPool) {
+        let repo = PgUserRepo::new(pool);
+        let fake_id = UserId::new();
 
-### Service 테스트 (mockall)
-```rust
-#[tokio::test]
-async fn create_user_duplicate_email_returns_error() {
-    let mut mock_repo = MockUserRepo::new();
-    mock_repo
-        .expect_find_by_email()
-        .returning(|_| Ok(Some(fake_user())));
-    // create는 호출되지 않아야 함
-    mock_repo.expect_create().times(0);
+        let result = repo.find_by_id(fake_id).await;
 
-    let svc = UserService::new(Arc::new(mock_repo));
-    let result = svc.create_user(CreateUserDto { ... }).await;
-    assert!(matches!(result, Err(AppError::Conflict(_))));
+        assert!(matches!(result, Err(RepositoryError::NotFound)));
+    }
+
+    #[sqlx::test]
+    async fn create_then_find_round_trip(pool: PgPool) {
+        let repo = PgUserRepo::new(pool);
+        let user = repo.create(CreateUserCommand {
+            email: "test@example.com".into(),
+            password_hash: "hash".into(),
+        }).await.unwrap();
+
+        let found = repo.find_by_id(user.id).await.unwrap();
+        assert_eq!(found.email, "test@example.com");
+    }
 }
 ```
 
-### Handler 테스트 (axum TestClient)
+### Property-Based 테스트
 ```rust
-#[tokio::test]
-async fn get_user_not_found_returns_404() {
-    let mut mock_svc = MockUserService::new();
-    mock_svc
-        .expect_get_user()
-        .returning(|_| Err(AppError::NotFound));
+use proptest::prelude::*;
 
-    let app = build_router(Arc::new(mock_svc));
-    let client = TestClient::new(app);
-    let res = client.get("/users/00000000-0000-0000-0000-000000000000").await;
-    assert_eq!(res.status(), StatusCode::NOT_FOUND);
-    let body: Value = res.json().await;
-    assert_eq!(body["error"]["code"], "NOT_FOUND");
-}
-```
-
-### Property-based 테스트
-```rust
 proptest! {
     #[test]
-    fn email_validation_rejects_invalid(s in "[^@]{1,50}") {
-        // @가 없는 문자열은 항상 실패해야 함
-        let result = validate_email(&s);
-        prop_assert!(result.is_err());
+    fn valid_email_always_accepted(
+        local in "[a-z]{1,20}",
+        domain in "[a-z]{2,10}",
+        tld in "[a-z]{2,4}"
+    ) {
+        let email = format!("{local}@{domain}.{tld}");
+        prop_assert!(Email::parse(&email).is_ok());
     }
 
     #[test]
-    fn pagination_offset_never_exceeds_total(
-        page in 0u64..1000,
-        page_size in 1u64..100
-    ) {
-        let offset = calculate_offset(page, page_size);
-        prop_assert!(offset <= u64::MAX / page_size);
+    fn no_at_sign_always_rejected(s in "[a-zA-Z0-9._%+-]{1,50}") {
+        prop_assert!(Email::parse(&s).is_err());
     }
 }
 ```
 
-## 커버리지 확인
-```bash
-cargo tarpaulin --out Html --output-dir coverage/
-# 목표: 도메인 로직 90%+, 핸들러 70%+
-```
-
-## Mutation Testing
-```bash
-cargo mutants --package my-api
-# 생존하는 돌연변이 발견 시 → 해당 케이스의 테스트 추가
-```
-
-## Verification Checklist
-- [ ] 새 테스트가 처음에 실패하는 것을 확인 (RED)
-- [ ] 테스트가 구현 세부사항이 아닌 행동을 검증
-- [ ] `// AI-generated: review required` 주석 붙임
-- [ ] `cargo test` 전체 통과
-- [ ] 커버리지 기준 충족
+## Verification (Test Agent 완료 조건)
+- [ ] `cargo test` → 새 테스트 **실패** (RED 확인)
+- [ ] 기존 테스트 모두 **통과** 유지
+- [ ] 컴파일 오류 없음
+- [ ] 구현 파일 미수정 확인 (`git diff src/` 에서 `#[cfg(test)]` 외 변경 없어야 함)
+- [ ] 각 테스트에 실패 이유 명시 주석 (또는 `todo!()` stub)

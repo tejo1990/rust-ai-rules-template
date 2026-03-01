@@ -1,82 +1,67 @@
 #!/usr/bin/env bash
-# mcp-setup.sh — AI 플랫폼별 MCP config 자동 배포
+# mcp-setup.sh — MCP config 파일을 플랫폼별 위치에 복사
 #
 # 사용법:
-#   ./scripts/mcp-setup.sh <project-path> <platform>
-#   ./scripts/mcp-setup.sh ~/projects/my-api all        # 모든 플랫폼
-#   ./scripts/mcp-setup.sh ~/projects/my-api cursor     # Cursor만
-#   ./scripts/mcp-setup.sh ~/projects/my-api antigravity
+#   ./scripts/mcp-setup.sh <platform> [project-dir]
 #
-# 전제: mcp/docker-compose.yml이 실행 중이어야 함
+# 플랫폼:
+#   cursor        → <project>/.cursor/mcp.json
+#   claude-code   → <project>/.claude/settings.json
+#   antigravity   → <project>/.gemini/antigravity/mcp_config.json
+#   windsurf      → ~/.codeium/windsurf/mcp_config.json (글로벌)
 
-set -e
+set -euo pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")"/.. && pwd)"
-MCP_CONFIGS="$SCRIPT_DIR/mcp/configs"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(dirname "$SCRIPT_DIR")"
+MCP_CONFIGS="$REPO_ROOT/mcp/configs"
 
-PROJECT="$1"
-PLATFORM="${2:-all}"
+PLATFORM="${1:-}"
+PROJECT_DIR="${2:-$(pwd)}"
 
-if [ -z "$PROJECT" ]; then
-  echo "Usage: $0 <project-path> [platform: all|claude|cursor|antigravity|windsurf]"
+if [[ -z "$PLATFORM" ]]; then
+  echo "Usage: $0 <platform> [project-dir]"
+  echo "Platforms: cursor | claude-code | antigravity | windsurf"
   exit 1
 fi
-
-if [ ! -d "$PROJECT" ]; then
-  echo "Error: project directory not found: $PROJECT"
-  exit 1
-fi
-
-setup_claude() {
-  echo "  → Claude Code"
-  mkdir -p "$PROJECT/.claude"
-  cp "$MCP_CONFIGS/claude-code.json" "$PROJECT/.claude/settings.json"
-}
-
-setup_cursor() {
-  echo "  → Cursor"
-  mkdir -p "$PROJECT/.cursor"
-  cp "$MCP_CONFIGS/cursor.json" "$PROJECT/.cursor/mcp.json"
-}
-
-setup_antigravity() {
-  echo "  → Google Antigravity"
-  mkdir -p "$PROJECT/.gemini/antigravity"
-  cp "$MCP_CONFIGS/antigravity.json" "$PROJECT/.gemini/antigravity/mcp_config.json"
-}
-
-setup_windsurf() {
-  echo "  → Windsurf"
-  mkdir -p "$PROJECT/.windsurf"
-  cp "$MCP_CONFIGS/windsurf.json" "$PROJECT/.windsurf/mcp.json"
-}
-
-echo "MCP config 설정: $PROJECT"
 
 case "$PLATFORM" in
-  all)
-    setup_claude
-    setup_cursor
-    setup_antigravity
-    setup_windsurf
-    ;;
-  claude|claude-code)
-    setup_claude ;;
   cursor)
-    setup_cursor ;;
+    DEST="$PROJECT_DIR/.cursor/mcp.json"
+    mkdir -p "$(dirname "$DEST")"
+    # JSON 주석(// ...) 제거 후 복사 (JSON은 주석 불가)
+    grep -v '^\/\/' "$MCP_CONFIGS/cursor.json" > "$DEST"
+    echo "✅  Cursor MCP config → $DEST"
+    ;;
+
+  claude-code)
+    DEST="$PROJECT_DIR/.claude/settings.json"
+    mkdir -p "$(dirname "$DEST")"
+    grep -v '^\/\/' "$MCP_CONFIGS/claude-code.json" > "$DEST"
+    echo "✅  Claude Code MCP config → $DEST"
+    ;;
+
   antigravity)
-    setup_antigravity ;;
+    DEST="$PROJECT_DIR/.gemini/antigravity/mcp_config.json"
+    mkdir -p "$(dirname "$DEST")"
+    grep -v '^\/\/' "$MCP_CONFIGS/antigravity.json" > "$DEST"
+    echo "✅  Antigravity MCP config → $DEST"
+    ;;
+
   windsurf)
-    setup_windsurf ;;
+    DEST="$HOME/.codeium/windsurf/mcp_config.json"
+    mkdir -p "$(dirname "$DEST")"
+    grep -v '^\/\/' "$MCP_CONFIGS/windsurf.json" > "$DEST"
+    echo "✅  Windsurf MCP config (global) → $DEST"
+    ;;
+
   *)
     echo "Unknown platform: $PLATFORM"
+    echo "Supported: cursor | claude-code | antigravity | windsurf"
     exit 1
     ;;
 esac
 
 echo ""
-echo "완료! MCP 서버가 실행 중인지 확인:"
-echo "  cd $(dirname $SCRIPT_DIR)/mcp && docker compose ps"
-echo ""
-echo "서버가 꺼져 있다면:"
-echo "  cd $(dirname $SCRIPT_DIR)/mcp && docker compose up -d"
+echo "⚠️  Docker MCP 스택이 실행 중이어야 합니다:"
+echo "   cd $(realpath "$REPO_ROOT")/mcp && docker compose up -d"

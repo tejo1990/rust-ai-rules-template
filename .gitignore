@@ -1,0 +1,19 @@
+# MCP 환경변수 (토큰/키 포함 — 절대 커밋 금지)
+mcp/.env
+
+# OS
+.DS_Store
+Thumbs.db
+
+# 에디터
+.vscode/
+*.swp
+
+# Rust 빌드 결과 (각 프로젝트의 것; 이 repo는 해당 없지만 명시)
+target/
+Cargo.lock  # 라이브러리는 제외; 애플리케이션은 커밋
+
+# Python (GitHub Actions 스크립트)
+__pycache__/
+*.pyc
+.venv/

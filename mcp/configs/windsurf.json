@@ -1,26 +1,31 @@
 {
-  "_comment": "Windsurf MCP 설정. ~/.codeium/windsurf/mcp_config.json 또는 프로젝트 .windsurf/mcp.json에 복사",
   "mcpServers": {
+    "filesystem": {
+      "serverUrl": "http://localhost:3001",
+      "transport": "http"
+    },
     "git": {
-      "serverUrl": "http://localhost:3001/sse"
+      "serverUrl": "http://localhost:3002",
+      "transport": "http"
     },
     "github": {
-      "serverUrl": "http://localhost:3002/sse"
-    },
-    "filesystem": {
-      "serverUrl": "http://localhost:3003/sse"
-    },
-    "sequential-thinking": {
-      "serverUrl": "http://localhost:3004/sse"
+      "serverUrl": "http://localhost:3003",
+      "transport": "http"
     },
     "memory": {
-      "serverUrl": "http://localhost:3005/sse"
+      "serverUrl": "http://localhost:3004",
+      "transport": "http"
+    },
+    "sequential-thinking": {
+      "serverUrl": "http://localhost:3005",
+      "transport": "http"
     },
     "fetch": {
-      "serverUrl": "http://localhost:3006/sse"
-    },
-    "cargo": {
-      "serverUrl": "http://localhost:3008/sse"
+      "serverUrl": "http://localhost:3006",
+      "transport": "http"
     }
   }
 }
+
+// 사용법:
+// cp mcp/configs/windsurf.json ~/.codeium/windsurf/mcp_config.json

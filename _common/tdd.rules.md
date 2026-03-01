@@ -1,150 +1,223 @@
-# AI-Augmented TDD (Test-Driven Development)
+# TDD + AI 개발 패러다임
 
-TDD와 AI를 조합할 때 가장 강력한 패턴을 정의한다.
-기본 원칙: **AI는 구현을 빠르게 생성하지만, 인간은 테스트로 의도를 선언한다.**
+## 왜 TDD+AI 조합이 강력한가
+
+전통 TDD는 "사람이 테스트 → 사람이 구현" 사이클이야.
+AI를 조합하면 사이클이 확장돼:
+
+```
+[사람] 요구사항 → 실패 테스트 작성 (또는 AI에게 테스트 초안 생성 위임)
+[AI]   테스트를 통과하는 최소 구현 작성
+[사람] 구현 검토 + 리팩터 지시
+[AI]   리팩터 수행 (테스트는 계속 그린)
+```
+
+AI는 "테스트가 이미 존재하는 상황"에서 구현 품질이 극적으로 올라가.
+테스트 = AI에게 주는 가장 정확한 spec.
 
 ---
 
-## 핵심 사이클 (AI-TDD Loop)
+## AI-TDD 사이클 (Rust)
 
+### Phase 1: Spec → Test (Red)
+
+**사람이 할 일:**
+- 요구사항을 자연어로 기술
+- 또는 직접 실패 테스트 작성
+
+**AI에게 위임 가능한 부분:**
 ```
-1. SPEC    → 인간(또는 AI)이 테스트로 의도를 선언
-2. RED     → cargo test 실패 확인
-3. GREEN   → AI가 최소 구현으로 통과시킴
-4. REFACTOR→ AI가 리팩터 제안 → 인간이 검토
-5. COMMIT  → 테스트와 구현을 함께 커밋
+프롬프트 예시:
+"다음 요구사항에 대한 실패 테스트를 작성해줘.
+테스트가 컴파일은 되지만 실행 시 실패해야 해.
+구현은 절대 건드리지 마.
+
+요구사항: EmailAddress 타입은 @ 포함 여부와 도메인을 검증해야 한다."
 ```
 
-**AI 없이**: 인간이 RED→GREEN→REFACTOR 모두 담당 → 느림  
-**AI 조합**: 인간이 테스트(의도)를 작성 → AI가 GREEN 달성 → 인간이 리팩터 검토  
-→ 속도는 AI, 의도의 정확성은 인간이 담당하는 분업
+**규칙:**
+- 테스트 파일만 수정. 구현 파일은 `todo!()` 또는 stub 상태.
+- 테스트는 반드시 컴파일되어야 함 (타입 오류 없이).
+- `cargo test`가 실패 확인 후 다음 페이즈.
+
+### Phase 2: Implementation (Green)
+
+**AI에게:**
+```
+프롬프트 예시:
+"위 테스트들을 통과시키는 최소한의 구현을 작성해줘.
+- 테스트 파일은 수정하지 마.
+- 과도한 최적화 금지. 테스트 통과가 목표.
+- 모든 unwrap()에는 TODO 주석 필수."
+```
+
+**규칙:**
+- 구현은 최소 경로로. "가장 단순하게 그린이 되는 코드".
+- 이 단계에서 아키텍처 최적화 금지.
+- `cargo test` 전체 그린 확인 후 다음 페이즈.
+
+### Phase 3: Refactor
+
+**AI에게:**
+```
+프롬프트 예시:
+"현재 구현을 리팩터해줘.
+- 테스트는 수정하지 마.
+- 매 리팩터 단계 후 cargo test가 그린이어야 해.
+- 리팩터할 항목: [구체적 지시]"
+```
+
+**규칙:**
+- 리팩터 중에는 새 기능 추가 금지.
+- 각 리팩터 단계가 독립적인 커밋이어야 함.
+- `cargo clippy -- -D warnings` 리팩터 후 통과 필수.
 
 ---
 
-## AI와 TDD 조합 시 규칙
+## AI와 잘 맞는 추가 패러다임
 
-### 테스트 먼저 (Red First)
-- AI에게 구현을 먼저 요청하지 않는다.
-  항상 "이 테스트를 통과하는 구현을 작성해줘" 형태로 요청한다.
-- 테스트가 없는 구현 PR은 리뷰를 통과하지 못한다.
-- AI가 테스트도 함께 생성할 때: 테스트를 먼저 보여달라고 요청하고,
-  테스트가 의도에 맞는지 확인 후 구현을 요청한다.
+### 1. Property-Based Testing (PBT) + AI
 
-### 테스트는 인간이 소유
-- AI가 생성한 테스트는 반드시 인간이 검토한다.
-- 테스트가 구현 세부사항을 검증하는지(나쁨) vs 행동을 검증하는지(좋음) 확인.
-- `#[test]`에 `// AI-generated: review required` 주석을 붙이고
-  검토 후 제거하는 관행을 유지한다.
+AI는 edge case 발견에 매우 뛰어나지만,
+사람이 미처 생각 못 한 불변식(invariant)을 proptest로 검증하면
+AI 구현의 숨겨진 버그를 더 잘 잡아.
 
-### 테스트 명명 규칙
 ```rust
-// 패턴: <대상>_<조건>_<기대결과>
-#[test]
-fn parse_empty_input_returns_error() { ... }
+// proptest로 불변식 기술 → AI에게 구현 위임
+use proptest::prelude::*;
 
-#[test]
-fn user_service_create_with_duplicate_email_fails() { ... }
-
-#[test]
-fn cache_get_after_ttl_expiry_returns_none() { ... }
-```
-
-### AI에게 테스트 생성 요청 시 프롬프트 패턴
-```
-"다음 함수의 테스트를 먼저 작성해줘.
-구현은 아직 작성하지 말고, 실패하는 테스트만.
-다음 케이스를 커버해야 해: [케이스 목록]"
-```
-
----
-
-## AI와 조합이 특히 효과적인 패러다임
-
-### 1. ATDD (Acceptance TDD)
-- 기능 요구사항을 실행 가능한 인수 테스트로 먼저 정의.
-- AI가 인수 테스트 → 단위 테스트 → 구현 순서로 생성.
-- 도구: `cucumber-rs`, `assert_cmd` (CLI), `reqwest` 기반 E2E.
-
-### 2. Property-Based Testing
-- 경계값, 특수 케이스를 인간이 놓치는 경우가 많음.
-- AI에게 "이 함수의 불변식(invariant)을 proptest로 작성해줘" 요청.
-- AI는 도메인 규칙으로부터 속성(property)을 잘 도출함.
-```rust
-// AI가 잘 생성하는 proptest 패턴
 proptest! {
     #[test]
-    fn encode_decode_roundtrip(input in any::<Vec<u8>>()) {
-        let encoded = encode(&input);
-        let decoded = decode(&encoded).unwrap();
-        prop_assert_eq!(input, decoded);
+    fn email_round_trip(s in "[a-z]+@[a-z]+\\.[a-z]+") {
+        let email = EmailAddress::parse(&s).unwrap();
+        prop_assert_eq!(email.to_string(), s);
+    }
+
+    #[test]
+    fn invalid_email_always_rejected(
+        s in "[a-z]{1,20}"  // @ 없는 문자열
+    ) {
+        prop_assert!(EmailAddress::parse(&s).is_err());
     }
 }
 ```
 
-### 3. Mutation Testing (돌연변이 테스트)
-- 구현에 고의적 버그를 심어 테스트가 잡아내는지 확인.
-- 도구: `cargo-mutants`
-- AI에게 "이 테스트의 돌연변이 생존율을 낮추려면 어떤 추가 테스트가 필요해?" 질문.
-- 테스트 품질을 정량화하는 가장 효과적인 방법.
+**AI 프롬프트 패턴:**
+> "위 proptest 불변식을 모두 만족하는 EmailAddress 구현을 작성해줘.
+> 반드시 proptest를 돌려서 확인해."
 
-### 4. Contract Testing (계약 테스트)
-- 서비스 간 API 계약을 테스트로 표현.
-- AI가 스펙 문서 → 계약 테스트 자동 생성에 강함.
-- 도구: `pact-rust` 또는 단순 trait 기반 계약.
+### 2. Contract-First Design + AI
 
-### 5. Test Archaeology (AI로 레거시 분석)
-- 기존 코드에 테스트가 없을 때: AI에게 코드를 분석시켜
-  "이 코드의 의도된 행동을 설명하고 테스트를 역설계해줘" 요청.
-- 리팩터 전 골든 마스터 테스트 생성에 효과적.
+타입 시그니처와 문서 주석(trait/struct)만 먼저 작성하고
+구현을 AI에게 위임. Rust의 타입 시스템이 AI의 구현 범위를 자연스럽게 제한.
 
----
-
-## 전용 Test Agent 사용 패턴
-
-도구가 sub-agent를 지원할 때 (Antigravity, Claude Code):
-
-```
-Test Agent 역할 선언:
-"너는 Test Agent야. 오직 테스트 코드만 작성한다.
-구현 파일(src/*)은 읽을 수 있지만 수정하지 않는다.
-테스트 파일(tests/*, src/**/#[cfg(test)])만 수정한다."
+```rust
+/// 사용자 저장소. 영속성 백엔드와 독립적으로 테스트 가능해야 한다.
+#[async_trait]
+pub trait UserRepository: Send + Sync {
+    /// 존재하지 않으면 NotFound 에러.
+    async fn find_by_id(&self, id: UserId) -> Result<User, RepositoryError>;
+    
+    /// 이메일 중복 시 AlreadyExists 에러.
+    async fn create(&self, cmd: CreateUserCommand) -> Result<User, RepositoryError>;
+    
+    /// 없는 id이면 무시 (멱등성 보장).
+    async fn delete(&self, id: UserId) -> Result<(), RepositoryError>;
+}
 ```
 
-**권장 분리 패턴:**
-- `Implementation Agent`: `src/` (테스트 외 구현 파일)
-- `Test Agent`: `tests/`, `src/**/#[cfg(test)]` 블록
+**AI 프롬프트 패턴:**
+> "위 trait의 in-memory 구현과 테스트를 작성해줘.
+> trait 시그니처는 변경하지 마."
 
-두 에이전트가 같은 파일을 동시에 수정하지 않도록
-파일 소유권을 명확히 선언한다.
+### 3. Mutation Testing + AI 리뷰
 
----
-
-## 테스트 커버리지 기준
-
-| 레이어 | 최소 커버리지 | 권장 |
-|--------|--------------|------|
-| 도메인 로직 / 비즈니스 규칙 | 90% | 100% |
-| Repository / DB 레이어 | 80% | 90% |
-| Handler / Controller | 70% | 80% |
-| CLI 서브커맨드 | 80% | 90% |
-| 임베디드 드라이버 (host-side) | 60% | 80% |
+`cargo-mutants`로 뮤테이션 테스트 실행 후
+AI에게 살아남은 뮤턴트(테스트가 잡지 못한 버그 후보) 분석 위임.
 
 ```bash
-# 커버리지 측정
-cargo install cargo-tarpaulin
-cargo tarpaulin --out Html --output-dir coverage/
+cargo mutants
+# 살아남은 뮤턴트가 있으면 AI에게:
+# "이 뮤턴트들이 테스트에서 잡히지 않은 이유와
+#  이를 잡는 테스트를 추가해줘."
+```
+
+### 4. Acceptance TDD (ATDD) + Agent
+
+비즈니스 레벨 acceptance test → 실패 → AI가 모든 레이어 구현.
+가장 AI+TDD 시너지가 큰 패턴.
+
+```rust
+// acceptance test: HTTP 레벨에서 기술
+#[tokio::test]
+async fn user_can_register_and_login() {
+    let app = spawn_test_app().await;
+    
+    // Register
+    let response = app.post("/auth/register", json!({
+        "email": "user@example.com",
+        "password": "secure123"
+    })).await;
+    assert_eq!(response.status(), 201);
+    
+    // Login
+    let response = app.post("/auth/login", json!({
+        "email": "user@example.com",
+        "password": "secure123"
+    })).await;
+    let token: String = response.json()["token"].as_str().unwrap().to_owned();
+    assert!(!token.is_empty());
+    
+    // Access protected resource
+    let response = app.get("/me").bearer(&token).await;
+    assert_eq!(response.status(), 200);
+}
+```
+
+**AI 프롬프트 패턴:**
+> "위 acceptance test를 통과시키는 전체 구현을 작성해줘.
+> Router, Handler, Service, Repository, Migration 모두 포함.
+> 단계별로: 먼저 cargo test가 컴파일 오류 없이 실패하는지 확인 후
+> 구현 시작."
+
+---
+
+## TDD 전용 Test Agent 설정
+
+### 역할 분리
+
+Agent Manager에서 테스트 전용 에이전트를 별도 운용:
+
+| 에이전트 | 역할 | 파일 소유권 |
+|---------|------|------------|
+| **Test Agent** | 테스트 작성, 실패 확인, 뮤테이션 분석 | `tests/**`, `src/**/#[cfg(test)]` |
+| **Impl Agent** | 테스트를 통과하는 구현 | `src/**` (테스트 블록 제외) |
+| **Refactor Agent** | 그린 상태 유지하며 리팩터 | `src/**` |
+
+**중요**: 각 에이전트는 자신의 파일 소유권 밖을 수정하지 않음.
+Test Agent가 구현을 수정하거나, Impl Agent가 테스트를 수정하면 TDD 사이클 붕괴.
+
+### Test Agent 운영 원칙
+
+```
+Test Agent의 유일한 성공 조건:
+  cargo test → 새로 추가한 테스트가 실패 (RED)
+
+Test Agent의 실패 조건:
+  - 구현 파일 수정
+  - 이미 통과하는 테스트 수정
+  - 테스트가 컴파일조차 안 되는 상태로 종료
 ```
 
 ---
 
-## 테스트 속도 관리
+## 커밋 전략 (AI+TDD)
 
-- 단위 테스트: < 1초 (개별), < 30초 (전체)
-- 통합 테스트: < 5분 (CI 기준)
-- 느린 테스트에 `#[ignore]`를 붙이고 CI에서 별도 실행:
-```bash
-cargo test                    # 빠른 테스트
-cargo test -- --ignored       # 느린 테스트 (CI 별도 스텝)
 ```
-- AI가 생성하는 테스트가 불필요한 sleep이나 I/O를 포함하는지 확인.
-  포함 시 mock 또는 `tokio::time::pause()`로 대체 요청.
+git commit -m "test: add failing tests for EmailAddress validation [RED]"
+git commit -m "feat: implement EmailAddress to pass validation tests [GREEN]"
+git commit -m "refactor: extract validation logic into validator module"
+```
+
+각 커밋 메시지에 `[RED]` / `[GREEN]` / `[REFACTOR]` 태그로
+어느 TDD 페이즈인지 명확히 표시.
