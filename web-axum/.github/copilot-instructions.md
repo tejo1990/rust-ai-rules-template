@@ -39,68 +39,59 @@ You are an expert Rust engineer. Apply these rules to every response.
 - Unit tests go in `#[cfg(test)]` at the bottom of the module.
 - Integration tests go in `tests/`.
 - Every public function must have at least one test covering the happy path.
-- Use `proptest` or `quickcheck` for invariant testing when dealing
-  with parsing or math logic.
 
 ### Dependencies
-- Before adding a dependency, check: can this be done in <20 lines of std?
-  If yes, prefer std.
-- Prefer well-maintained crates: check crates.io downloads + last release date.
-- Pin dependencies in applications (`Cargo.lock` committed).
-  Libraries leave versions flexible.
+- Before adding a dependency, check: can this be done in <20 lines of std? If yes, prefer std.
+- Pin dependencies in applications. Libraries leave versions flexible.
 
 ### Formatting & Lints
-- Code must pass `cargo fmt` and `cargo clippy -- -D warnings`
-  with no suppressions unless commented.
-- Use `#[allow(clippy::...)]` sparingly; always add a comment explaining why.
+- Code must pass `cargo fmt` and `cargo clippy -- -D warnings`.
+
+---
+
+## Agentic Workflow
+
+### Planning Before Acting
+- Before writing any code, produce an explicit Implementation Plan.
+- Break large tasks into sequential sub-tasks; verify each before proceeding.
+
+### Sub-agent Delegation
+- Split by layer: schema/migrations, service logic, API handlers.
+- Each agent declares its file scope. No cross-scope writes.
+
+### Verification
+- Run `cargo check && cargo clippy -- -D warnings && cargo test` after each sub-task.
+- Do not proceed if checks fail.
+
+### Context & Memory
+- Maintain `AGENT_LOG.md` with completed tasks, decisions, blockers.
 
 ---
 
 ## Domain: Full-Stack Web (Axum)
 
-### Stack Assumptions
-- Backend: Axum, Tower middleware, Tokio runtime
-- Database: SQLx (preferred) or SeaORM with PostgreSQL
-- Auth: JWT via `jsonwebtoken` or session via `tower-sessions`
-- Frontend: Leptos (SSR/CSR) or separate JS frontend consuming JSON API
-
 ### Architecture
 - Layer structure: Router → Handler → Service → Repository → DB
-- Handlers are thin: extract, validate, call service, return response.
-  No business logic in handlers.
-- Services own business logic and are testable without HTTP context.
-- Repository trait abstracts DB calls; implement with SQLx.
-  Use trait objects (`Arc<dyn UserRepo>`) for testability.
+- Handlers are thin. No business logic in handlers.
+- Repository trait for DB; `Arc<dyn Repo>` for testability.
 
 ### Async Rules
-- All async functions must be `Send + 'static` compatible for Tokio.
-- Never block the async executor: use `tokio::task::spawn_blocking`
-  for CPU-bound or legacy sync I/O.
-- Use `tokio::select!` for cancellation-safe branching; document cancel-safety.
-- Connection pools (SQLx `PgPool`) are `Arc`-shared;
-  never create per-request connections.
+- All async functions: `Send + 'static`. No blocking in async context.
+- SQLx `PgPool` is `Arc`-shared. Never create per-request connections.
 
 ### Request / Response
-- Use `serde` with `#[serde(rename_all = "camelCase")]` on API DTOs.
-- Separate internal domain types from API DTOs.
-  Never expose DB models directly.
-- Validate input with `validator` crate on DTOs before passing to service layer.
-- Return structured JSON errors: `{ "error": { "code": "...", "message": "..." } }`
+- DTOs use `#[serde(rename_all = "camelCase")]`.
+- Internal domain types ≠ API DTOs ≠ DB models.
+- Validate with `validator` before service layer.
 
-### Error Handling (Web specific)
-- Implement `IntoResponse` for your error type
-  to convert domain errors to HTTP responses.
-- Map errors explicitly: `NotFound` → 404, `Unauthorized` → 401, etc.
-- Never return 500 with internal details in production;
-  log internally, return generic message.
+### Error Handling
+- `IntoResponse` on error type. Explicit HTTP code mapping.
+- Never leak internal details in 500 responses.
 
 ### Database
-- Use `sqlx::query_as!` macros for compile-time query checking.
-- Migrations in `migrations/` managed by `sqlx migrate`.
-- Use transactions for any operation touching multiple tables.
-- Add DB-level indexes for every foreign key and commonly queried field.
+- `sqlx::query_as!` for compile-time query checking.
+- Migrations via `sqlx migrate`. Transactions for multi-table ops.
 
 ### Testing
-- Use `sqlx::test` for repository tests with real DB transactions (auto-rolled back).
-- Use `axum::test` helpers or `reqwest` for integration tests against a test server.
-- Mock service layer with `mockall` for handler unit tests.
+- `sqlx::test` for repository tests (auto-rollback).
+- `mockall` for service layer mocks in handler tests.

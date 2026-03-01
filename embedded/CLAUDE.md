@@ -7,52 +7,65 @@ You are an expert Rust engineer. Apply these rules to every response.
   every `unsafe` block must have a SAFETY comment explaining
   the invariant being upheld.
 - Prefer `Result<T, E>` over `unwrap()`/`expect()` in library code.
-  `expect()` is acceptable in application entry points with a descriptive message.
-- Use `thiserror` for library errors, `anyhow` for application-level errors.
-- Avoid `clone()` unless necessary. Prefer borrowing. If cloning, comment why.
-- Prefer `impl Trait` in function signatures over generics
-  when the type doesn't need to be named by the caller.
+- Use `thiserror` for library errors (std targets); custom enums for no_std.
+- Avoid `clone()` unless necessary. If cloning, comment why.
 - Use `#[must_use]` on functions returning `Result` or meaningful values.
 - Avoid `unwrap()` in any production path without explicit justification.
 
 ### Naming & Structure
 - Follow Rust API Guidelines: https://rust-lang.github.io/api-guidelines/
-- Module structure: `lib.rs` re-exports; keep internal modules
-  private by default (`pub(crate)`).
 - Types, traits: UpperCamelCase. Functions, variables: snake_case.
   Constants: SCREAMING_SNAKE_CASE.
 - One struct/enum per concern. Avoid god structs.
 
 ### Error Handling Pattern
-- Define a project-level `Error` enum using `thiserror` at `src/error.rs`.
-- Every fallible public function returns `Result<T, crate::Error>`.
-- Never silently swallow errors (`let _ = ...` requires a comment).
-
-### Ownership & Lifetimes
-- Design APIs to minimize lifetime annotations on public types.
-- Prefer owned types in struct fields unless there's a measurable
-  performance reason.
-- Use `Arc<T>` for shared ownership across async/thread boundaries;
-  `Rc<T>` only in single-threaded contexts.
-
-### Testing
-- Unit tests go in `#[cfg(test)]` at the bottom of the module.
-- Integration tests go in `tests/`.
-- Every public function must have at least one test covering the happy path.
-- Use `proptest` or `quickcheck` for invariant testing when dealing
-  with parsing or math logic.
-
-### Dependencies
-- Before adding a dependency, check: can this be done in <20 lines of std?
-  If yes, prefer std.
-- Prefer well-maintained crates: check crates.io downloads + last release date.
-- Pin dependencies in applications (`Cargo.lock` committed).
-  Libraries leave versions flexible.
+- no_std: custom `Error` enum with `defmt::Format`.
+- std targets: `thiserror` at `src/error.rs`.
+- Never silently swallow errors.
 
 ### Formatting & Lints
-- Code must pass `cargo fmt` and `cargo clippy -- -D warnings`
-  with no suppressions unless commented.
-- Use `#[allow(clippy::...)]` sparingly; always add a comment explaining why.
+- Code must pass `cargo fmt` and `cargo clippy -- -D warnings`.
+
+---
+
+## Agentic Workflow
+
+### Planning Before Acting
+- Before writing any code, produce an explicit **Implementation Plan**:
+  list files to create/modify and the order of operations.
+- Break tasks larger than ~200 lines into sequential sub-tasks.
+  Complete and verify (cargo check) each before starting the next.
+- If task is ambiguous, output a **clarification list** and pause.
+
+### Sub-agent / Parallel Task Delegation
+- Split work along hardware abstraction boundaries:
+    - Agent A: HAL drivers / peripheral init  →  scope: `src/drivers/`
+    - Agent B: Application tasks              →  scope: `src/tasks/`
+    - Agent C: Config / memory layout         →  scope: `src/config/`, `memory.x`
+  Agents must not write outside their declared scope.
+
+### Verification After Each Step
+- After every change:
+    cargo check --target <your-target>
+    cargo clippy --target <your-target> -- -D warnings
+    cargo size  (track binary size budget)
+- For logic units testable on host:
+    cargo test  (uses #[cfg(test)] std-enabled paths)
+- Do not proceed if checks fail.
+
+### Context & Memory Management
+- Re-read CLAUDE.md at the start of each agent session.
+- Maintain `AGENT_LOG.md` at project root:
+    - Completed sub-tasks with outcomes.
+    - Memory layout decisions.
+    - Peripheral init order.
+    - Open hardware-specific questions.
+
+### Scope Discipline
+- Never refactor outside current task scope.
+  Log improvements in `AGENT_LOG.md`.
+- Binary size budget is a hard constraint.
+  Do not add crates without checking `cargo size` impact.
 
 ---
 
@@ -68,50 +81,36 @@ You are an expert Rust engineer. Apply these rules to every response.
 ### Stack & Framework
 - Prefer Embassy for async embedded (cortex-m, nrf, stm32, rp2040).
 - Prefer RTIC for deterministic interrupt-driven systems.
-- Use `defmt` for logging (not `println!`).
-  All log calls use `defmt::info!`, `defmt::error!`, etc.
+- Use `defmt` for logging. All log calls use `defmt::info!`, `defmt::error!`.
 - Use `probe-rs` / `cargo-embed` for flashing and RTT logging.
 
 ### Memory
-- Use `heapless` for stack-allocated collections (Vec, String, Queue).
-- Avoid `alloc` unless explicitly using an embedded allocator (`embedded-alloc`).
-- Shared state between tasks/interrupts:
-  use Embassy's `Mutex<CriticalSectionRawMutex, T>` or `Signal`,
-  never raw static mutables without critical section.
-- Static buffers for DMA or peripheral buffers:
-  use `static` with `cortex_m::singleton!` or `embassy_sync` primitives.
+- Use `heapless` for stack-allocated collections.
+- Avoid `alloc` unless explicitly using `embedded-alloc`.
+- Shared state: Embassy's `Mutex<CriticalSectionRawMutex, T>` or `Signal`.
+- DMA buffers: `static` with `cortex_m::singleton!` or `embassy_sync`.
 
 ### Peripheral & Hardware Abstraction
-- Use `embedded-hal` traits for portable peripheral abstractions.
-- Driver code takes `impl embedded_hal::...` not concrete peripheral types.
-- Initialize all peripherals at boot; pass ownership into tasks —
-  do not share mutable peripheral references.
+- Use `embedded-hal` traits for portable abstractions.
+- Driver code takes `impl embedded_hal::...` not concrete types.
+- Initialize all peripherals at boot; pass ownership into tasks.
 
 ### Async (Embassy specific)
 - Tasks are `#[embassy_executor::task]`. Each task owns its resources.
-- Use `Channel`, `Signal`, or `Pipe` for inter-task communication.
-  No shared mutable state.
-- Timeouts: always use `embassy_time::with_timeout` on I/O operations.
-  Never block indefinitely on peripheral I/O.
+- `Channel`, `Signal`, or `Pipe` for inter-task communication.
+- Always `embassy_time::with_timeout` on I/O. Never block indefinitely.
 
 ### Error Handling (no_std)
-- No `anyhow`/`std::error::Error`.
-  Use custom enums or `core::convert::Infallible`.
-- Application-level errors: `defmt::error!` then
-  `cortex_m::peripheral::SCB::sys_reset()` or a defined fault handler.
-- Never use `unwrap()` on peripheral init failures
-  without a reset or halt recovery path.
+- No `anyhow`/`std::error::Error`. Use custom enums or `Infallible`.
+- On fatal error: `defmt::error!` then `SCB::sys_reset()` or fault handler.
+- Never `unwrap()` on peripheral init without a recovery path.
 
 ### Build & Config
-- `.cargo/config.toml` must specify target, linker, and runner.
+- `.cargo/config.toml` must specify target, linker, runner.
 - `memory.x` must be version-controlled and chip-specific.
-- Feature flags for board variants:
-  e.g., `features = ["nrf52840", "nrf52832"]`.
-- `cargo size` and `cargo bloat` checks before finalizing;
-  track binary size budget.
+- Feature flags for board variants: `features = ["nrf52840"]`.
+- Track binary size budget with `cargo size` and `cargo bloat`.
 
 ### Testing
-- Host-side unit tests with `#[cfg(test)]` using `std`
-  for pure logic (no hardware).
-- Hardware-in-the-loop tests via `probe-rs` test framework
-  or manual test harness.
+- Host-side unit tests with `#[cfg(test)]` using std for pure logic.
+- HIL tests via `probe-rs` test framework or manual harness.

@@ -53,3 +53,68 @@ You are an expert Rust engineer. Apply these rules to every response.
 - Code must pass `cargo fmt` and `cargo clippy -- -D warnings`
   with no suppressions unless commented.
 - Use `#[allow(clippy::...)]` sparingly; always add a comment explaining why.
+
+---
+
+## Agentic Workflow
+
+This section applies when operating as an autonomous agent or orchestrating
+sub-agents (Cursor Agent, Claude Code sub-agents, Antigravity Agent Manager).
+
+### Planning Before Acting
+- Before writing any code, produce an explicit **Implementation Plan**:
+  list files to create/modify, modules to add, and the order of operations.
+- Break tasks larger than ~200 lines of change into sequential sub-tasks.
+  Complete and verify each sub-task before starting the next.
+- If a task is ambiguous, output a **clarification list** and pause.
+  Do not make silent assumptions on architecture-level decisions.
+
+### Sub-agent / Parallel Task Delegation
+- When the platform supports sub-agents or parallel tasks
+  (Antigravity Agent Manager, Claude Code sub-agents),
+  split work along clear module or crate boundaries:
+    - One agent per crate in a workspace.
+    - One agent for schema/migrations, one for business logic,
+      one for API handlers — never overlap file ownership.
+- Each delegated sub-task must include:
+    1. A precise file scope (which files it may read/write).
+    2. Its input contract (types, traits it receives).
+    3. Its output contract (types, traits it must produce).
+- Sub-agents must not modify files outside their declared scope.
+  If a scope conflict is discovered, escalate to the orchestrator
+  rather than silently overwriting.
+
+### Verification After Each Step
+- After every non-trivial change, run (or instruct the agent to run):
+    cargo check
+    cargo clippy -- -D warnings
+    cargo test
+- Do not proceed to the next sub-task if any of the above fail.
+- For Antigravity: generate a **Verification Artifact** (task walkthrough)
+  after each major milestone so the human can review before continuation.
+
+### Tool & Terminal Use
+- Prefer `cargo` subcommands over manual file manipulation for scaffolding.
+- Limit terminal commands to the project directory.
+  Never run commands that affect the system outside the workspace
+  (no global `cargo install` without confirmation).
+- All shell commands must be shown to the user before execution
+  unless the platform is set to "Always Proceed" and the command
+  is read-only (e.g., `cargo check`, `cargo test`).
+
+### Context & Memory Management
+- At the start of each agent session, re-read `CLAUDE.md` /
+  `.gemini/GEMINI.md` / `.cursorrules` to reload project rules.
+- Maintain a running `AGENT_LOG.md` at the project root that records:
+    - Completed sub-tasks with outcomes.
+    - Decisions made and their rationale.
+    - Open questions or blockers.
+- When context window pressure is high, summarize completed work
+  into `AGENT_LOG.md` before continuing.
+
+### Scope Discipline
+- Never refactor code outside the current task scope,
+  even if improvements are obvious. Log them in `AGENT_LOG.md` instead.
+- Do not add unasked-for dependencies. If a dependency would
+  materially improve the solution, propose it and wait for approval.
+- Feature creep from the agent side is a bug, not a feature.

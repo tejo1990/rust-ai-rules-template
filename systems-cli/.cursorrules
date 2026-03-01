@@ -3,107 +3,65 @@
 You are an expert Rust engineer. Apply these rules to every response.
 
 ### Code Quality
-- Always prefer safe Rust. Use `unsafe` only when unavoidable;
-  every `unsafe` block must have a SAFETY comment explaining
-  the invariant being upheld.
-- Prefer `Result<T, E>` over `unwrap()`/`expect()` in library code.
-  `expect()` is acceptable in application entry points with a descriptive message.
-- Use `thiserror` for library errors, `anyhow` for application-level errors.
-- Avoid `clone()` unless necessary. Prefer borrowing. If cloning, comment why.
-- Prefer `impl Trait` in function signatures over generics
-  when the type doesn't need to be named by the caller.
-- Use `#[must_use]` on functions returning `Result` or meaningful values.
-- Avoid `unwrap()` in any production path without explicit justification.
+- `unsafe` only with SAFETY comment.
+- `Result<T, E>` over `unwrap()`. `thiserror` for libs, `anyhow` for apps.
+- Avoid unnecessary `clone()`. Comment when used.
+- `#[must_use]` on Result-returning functions.
+- `cargo fmt` + `cargo clippy -- -D warnings`.
 
-### Naming & Structure
-- Follow Rust API Guidelines: https://rust-lang.github.io/api-guidelines/
-- Module structure: `lib.rs` re-exports; keep internal modules
-  private by default (`pub(crate)`).
-- Types, traits: UpperCamelCase. Functions, variables: snake_case.
-  Constants: SCREAMING_SNAKE_CASE.
-- One struct/enum per concern. Avoid god structs.
+### Naming
+- Types: UpperCamelCase. Functions/vars: snake_case. Constants: SCREAMING_SNAKE_CASE.
 
-### Error Handling Pattern
-- Define a project-level `Error` enum using `thiserror` at `src/error.rs`.
-- Every fallible public function returns `Result<T, crate::Error>`.
-- Never silently swallow errors (`let _ = ...` requires a comment).
+---
 
-### Ownership & Lifetimes
-- Design APIs to minimize lifetime annotations on public types.
-- Prefer owned types in struct fields unless there's a measurable
-  performance reason.
-- Use `Arc<T>` for shared ownership across async/thread boundaries;
-  `Rc<T>` only in single-threaded contexts.
+## Agentic Workflow
 
-### Testing
-- Unit tests go in `#[cfg(test)]` at the bottom of the module.
-- Integration tests go in `tests/`.
-- Every public function must have at least one test covering the happy path.
-- Use `proptest` or `quickcheck` for invariant testing when dealing
-  with parsing or math logic.
+### Planning
+- Implementation Plan before writing code.
+- Break large tasks into sequential sub-tasks; verify each.
 
-### Dependencies
-- Before adding a dependency, check: can this be done in <20 lines of std?
-  If yes, prefer std.
-- Prefer well-maintained crates: check crates.io downloads + last release date.
-- Pin dependencies in applications (`Cargo.lock` committed).
-  Libraries leave versions flexible.
+### Sub-agent Delegation
+- Split by concern:
+    - Agent A: CLI parsing + subcommands  (src/cli/)
+    - Agent B: Core logic               (src/core/)
+    - Agent C: I/O, signals, daemon     (src/io/, src/daemon/)
+- No cross-scope writes.
 
-### Formatting & Lints
-- Code must pass `cargo fmt` and `cargo clippy -- -D warnings`
-  with no suppressions unless commented.
-- Use `#[allow(clippy::...)]` sparingly; always add a comment explaining why.
+### Verification
+- `cargo check && cargo clippy -- -D warnings && cargo test` after each step.
+- CLI integration: `cargo test --test '*'`.
+- Do not proceed if checks fail.
+
+### Context & Memory
+- `AGENT_LOG.md`: CLI contract decisions, signal handling, perf snapshots.
+- Never refactor outside scope. Log improvements.
 
 ---
 
 ## Domain: Systems / CLI / Daemon
 
-### CLI Tools
-- Use `clap` with derive macros for argument parsing.
-- Subcommand structure:
-  `AppArgs { command: Commands }` where `Commands` is an enum.
-- Exit codes:
-  0 success, 1 user/input error, 2 internal/unexpected error.
-  Use `std::process::exit()` only at top level.
-- Output: human-readable to stdout, errors to stderr.
-  Add `--json` flag for machine-readable output.
-- Progress: use `indicatif` for long-running operations.
+### CLI
+- `clap` with derive. Subcommand enum pattern.
+- Exit codes: 0/1/2. Stdout human, stderr errors, `--json` flag.
+- `indicatif` for progress.
 
 ### Performance
-- Profile before optimizing. Use `cargo-flamegraph` or `perf`.
-- Prefer iterators over manual loops; trust LLVM to optimize.
-- Avoid allocations in hot paths:
-  reuse buffers, use `String::with_capacity`, preallocate `Vec`.
-- For I/O-bound: use Tokio async. For CPU-bound parallel: use Rayon.
-- Use `memmap2` for large file processing instead of reading into memory.
+- Profile first. Iterators > manual loops.
+- Tokio for I/O-bound; Rayon for CPU-bound parallel.
+- `memmap2` for large files.
 
-### Concurrency (Thread-based)
-- Use `std::thread::scope` for structured concurrency with borrowed data.
-- Channel of choice:
-  `crossbeam-channel` for MPMC,
-  `std::sync::mpsc` for simple producer-consumer.
-- Mutex: `parking_lot::Mutex` over `std::sync::Mutex` (faster, no poisoning).
-- `Arc<RwLock<T>>` for shared read-heavy state; minimize write lock scope.
+### Concurrency
+- `crossbeam-channel` for MPMC. `parking_lot::Mutex` over std.
+- `Arc<RwLock<T>>` for shared read-heavy state.
 
-### Daemon / Long-running Process
-- Handle signals: `tokio::signal` or `signal-hook`
-  for SIGTERM/SIGINT graceful shutdown.
-- Implement graceful shutdown:
-  drain work queues, flush buffers, close connections before exit.
-- Logging: `tracing` crate with `tracing-subscriber`.
-  JSON format for production, pretty for dev.
-- Config: `config` crate or `serde` + TOML/YAML file
-  + env var override with `envy`.
-- PID file management if running as a system service.
+### Daemon
+- Graceful shutdown on SIGTERM/SIGINT.
+- `tracing` + JSON for prod, pretty for dev.
+- Config: TOML/YAML + env vars via `envy`.
 
-### Safety & Correctness
-- Use `nix` or `rustix` for Unix syscalls instead of raw `libc`.
-- File operations: always handle `EINTR` (retry loop) for low-level I/O.
-- Temporary files: use `tempfile` crate, never manual `/tmp/...` paths.
-- Privilege management: drop privileges (setuid/setgid) as early as possible.
+### Safety
+- `nix`/`rustix` for syscalls. Handle `EINTR`.
+- `tempfile` for temp files. Drop privileges early.
 
 ### Testing
-- Integration tests in `tests/` using `assert_cmd` + `predicates`
-  to test CLI behavior end-to-end.
-- Snapshot testing with `insta` for complex output verification.
-- Benchmark with `criterion` for performance-sensitive functions.
+- `assert_cmd` + `predicates`. `insta` snapshots. `criterion` benchmarks.

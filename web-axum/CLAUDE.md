@@ -56,6 +56,49 @@ You are an expert Rust engineer. Apply these rules to every response.
 
 ---
 
+## Agentic Workflow
+
+### Planning Before Acting
+- Before writing any code, produce an explicit **Implementation Plan**:
+  list files to create/modify, modules to add, and the order of operations.
+- Break tasks larger than ~200 lines of change into sequential sub-tasks.
+  Complete and verify each sub-task before starting the next.
+- If a task is ambiguous, output a **clarification list** and pause.
+  Do not make silent assumptions on architecture-level decisions.
+
+### Sub-agent / Parallel Task Delegation
+- Split work along layer boundaries:
+    - Agent A: DB schema + migrations
+    - Agent B: Repository + Service layer
+    - Agent C: Axum handlers + Router
+  Each agent owns only its declared files.
+- Each sub-task must declare its input/output types explicitly
+  before starting implementation.
+- Sub-agents must not modify files outside their declared scope.
+
+### Verification After Each Step
+- After every non-trivial change, run:
+    cargo check
+    cargo clippy -- -D warnings
+    cargo test
+    sqlx migrate run  (if schema changed)
+- Do not proceed to the next sub-task if any of the above fail.
+- For Antigravity: generate a Verification Artifact after each layer.
+
+### Context & Memory Management
+- Re-read CLAUDE.md at the start of each agent session.
+- Maintain `AGENT_LOG.md` at project root:
+    - Completed sub-tasks with outcomes.
+    - API contract decisions (endpoint shapes, error codes).
+    - Open questions or blockers.
+
+### Scope Discipline
+- Never refactor outside current task scope.
+  Log improvements in `AGENT_LOG.md`.
+- Do not add dependencies without proposing and waiting for approval.
+
+---
+
 ## Domain: Full-Stack Web (Axum)
 
 ### Stack Assumptions
