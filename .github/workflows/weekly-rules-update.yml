@@ -2,9 +2,8 @@ name: Weekly Rules Update
 
 on:
   schedule:
-    # 매주 월요일 오전 9시 (UTC) = 한국시간 오후 6시
     - cron: '0 9 * * 1'
-  workflow_dispatch:  # 수동 실행 가능
+  workflow_dispatch:
 
 permissions:
   contents: write
@@ -26,7 +25,7 @@ jobs:
 
       - name: Install dependencies
         run: |
-          pip install anthropic httpx feedparser
+          pip install anthropic google-generativeai httpx feedparser
 
       - name: Fetch Rust ecosystem updates
         id: fetch
@@ -39,6 +38,7 @@ jobs:
         run: python .github/scripts/suggest_rule_updates.py
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           UPDATES_FILE: /tmp/rust_updates.md
           OUTPUT_FILE: /tmp/rule_suggestions.md
 
@@ -63,4 +63,4 @@ jobs:
           labels: |
             rules-update
             automated
-          draft: true  # 초안 PR — 사람이 검토 후 머지
+          draft: true
